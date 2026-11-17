@@ -1,11 +1,13 @@
-// Re-export dari lib/api.ts — semua logika prediksi dan tipe ada di satu tempat.
-// File ini dipertahankan agar impor lama (`from "@/lib/gerdApi"`) tidak rusak.
+// lib/gerdApi.ts
+// Re-export dari lib/api.ts — menjaga kompatibilitas impor lama.
 export { predict as predictGerdImage, normalize, ApiError } from "./api";
-export type { Prediction as GerdPrediction, Label } from "./api";
+export type { PredictionResult as GerdPrediction, Prediction, Label } from "./api";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_GERD_API_URL ?? "http://127.0.0.1:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-/** Cek apakah backend hidup dan model sudah dimuat. */
+/**
+ * Cek apakah backend hidup dan model sudah dimuat.
+ */
 export async function checkGerdApi(): Promise<boolean> {
   try {
     const response = await fetch(`${API_BASE_URL}/health`, { cache: "no-store" });

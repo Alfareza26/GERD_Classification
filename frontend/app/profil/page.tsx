@@ -36,7 +36,7 @@ export default function Profil() {
           </div>
         </section>
 
-        <section className="panel stack" style={{ ["--gap" as string]: "16px" }}>
+        {/* <section className="panel stack" style={{ ["--gap" as string]: "16px" }}>
           <h3>Ambang batas keyakinan</h3>
           <p className="muted small">Hasil dengan keyakinan di bawah angka ini diberi peringatan agar Anda meninjau citra secara manual.</p>
           <div className="row" style={{ justifyContent: "space-between" }}>
@@ -50,7 +50,7 @@ export default function Profil() {
               <button type="button" key={v} className="chip" aria-pressed={Number(form.threshold) === v} onClick={() => { setOk(false); setForm({ ...form, threshold: v }); }}>{v}% · {l}</button>
             ))}
           </div>
-        </section>
+        </section> */}
 
         {ok && <p className="notice good" role="status">Perubahan tersimpan di browser ini.</p>}
         <div className="row" style={{ justifyContent: "flex-end" }}>

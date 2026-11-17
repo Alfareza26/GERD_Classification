@@ -9,7 +9,7 @@ const steps = [
   [
     "02",
     "Unggah dan isi data",
-    "Masukkan kode pasien anonim, usia, dan jenis kelamin. Gerbang input memeriksa apakah citra memang hasil endoskopi.",
+    "Masukkan nama pasien, usia, dan jenis kelamin. Gerbang input memeriksa apakah citra memang hasil endoskopi.",
   ],
   [
     "03",
@@ -73,8 +73,8 @@ export default function Home() {
               <span className="muted">GERD dan Normal</span>
             </div>
             <div>
-              <b>EfficientNetB0</b>
-              <span className="muted">Convolutional Neural Network, Transfer Learning</span>
+              <b>EfficientNetB4</b>
+              <span className="muted">Model Klasifikasi & Grad-CAM Explainability</span>
             </div>
             <div>
               <b>Input Validation</b>

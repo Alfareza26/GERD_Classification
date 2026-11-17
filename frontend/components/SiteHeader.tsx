@@ -15,7 +15,7 @@ export default function SiteHeader() {
           <img src="/logo-light.png" alt="" width={36} height={36} className="logo logo-light" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-dark.png" alt="" width={36} height={36} className="logo logo-dark" />
-          GERD AI 
+          G - Care
         </Link>
         <nav className="nav" aria-label="Utama">
           {links.map(([href, label]) => (

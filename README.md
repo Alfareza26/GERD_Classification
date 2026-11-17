@@ -1,220 +1,252 @@
-# Panduan Pengoperasian GERD Image Classifier
-Sistem Klasifikasi Citra Medis Berbasis Deep Learning & Explainable AI (Grad-CAM)
+# Panduan Sistem GERD Image Classifier
+Sistem Klasifikasi Citra Endoskopi Berbasis Deep Learning & Image-Type Gate Guard
 
 ---
 
 ## 1. Ikhtisar Sistem & Arsitektur
 
-Proyek **GERD Image Classifier** adalah sistem pendukung keputusan klinis (*Clinical Decision Support System*) yang dirancang untuk menganalisis citra endoskopi saluran cerna bagian atas (EGD). Sistem ini membantu mendeteksi tanda-tanda erosi mukosa esofagus distal dan lesi pada Z-line yang berkaitan dengan GERD (*Gastroesophageal Reflux Disease*).
+**GERD Image Classifier** adalah sistem pendukung keputusan klinis (*Clinical Decision Support System* / CDSS) berbasis kecerdasan buatan (*Deep Learning*) yang dirancang untuk menganalisis citra endoskopi saluran cerna atas (*Esophagogastroduodenoscopy* / EGD). Sistem ini membantu mendeteksi tanda-tanda erosi mukosa esofagus distal dan lesi pada Z-line yang berkaitan dengan GERD (*Gastroesophageal Reflux Disease*).
 
-### Arsitektur Aplikasi
-- **Backend (`/backend`)**:
-  - **Framework**: FastAPI (Python 3.11) & Uvicorn.
-  - **Deep Learning Model**: EfficientNetB0 (`model_gerd_lanjutan.keras`) dengan Test-Time Augmentation (TTA).
-  - **Explainable AI (XAI)**: Grad-CAM (*Gradient-weighted Class Activation Mapping*) berbasis aktivasi layer `top_activation`.
-  - **Guard Layer**: Filter kualitas statistik (brightness, contrast, saturation), deteksi *Out-of-Distribution* (OOD) jarak Mahalanobis, kalibrasi probabilitas Platt (*Platt Scaling*), serta pita ketidakpastian (*uncertainty band*).
-- **Frontend (`/frontend`)**:
-  - **Framework**: React 19, Vite, Tailwind CSS, Lucide Icons, Material Symbols.
-  - **Interaksi**: Drag-and-drop unggah citra, inspeksi side-by-side, visualisasi overlay heatmap Grad-CAM dengan slider opasitas, manajemen riwayat lokal (EHR), dan cetak rekap medis.
+Sistem mengklasifikasikan citra ke dalam dua kategori:
+- **`GERD`**: Esofagitis Erosif (terdapat mucosal breaks / erosi pada esofagus distal).
+- **`GERD_Normal`**: Mukosa esofagus normal atau Non-Erosive Reflux Disease (NERD).
 
 ---
 
-## 2. Prasyarat Sistem (*Prerequisites*)
+## 2. Stack Teknologi yang Digunakan
 
-Pastikan perangkat Anda telah terpasang:
-1. **Python 3.11 (64-bit)**
-2. **Node.js (v18.0.0 atau lebih baru)** & **npm**
-3. **Sistem Operasi**: Windows 10/11 (PowerShell atau Command Prompt)
+### Backend (`/backend`)
+| Komponen | Teknologi | Peran |
+|---|---|---|
+| **Runtime** | Python 3.11 | Lingkungan eksekusi backend |
+| **Web Framework** | FastAPI | Framework REST API asinkron berkinerja tinggi |
+| **ASGI Server** | Uvicorn | Server HTTP/ASGI produksi dan pengembangan |
+| **Deep Learning** | TensorFlow / Keras 2.21 | Pemuatan model `.keras` dan eksekusi inferensi |
+| **Model Klasifikasi** | EfficientNetB0 (`model_gerd_combined.keras`) | Model CNN transfer learning hasil pelatihan gabungan |
+| **Image-Type Gate** | EfficientNetB0 (`image_type_classifier.keras`) | Filter keamanan penyaring citra non-endoskopi |
+| **Image Processing** | Pillow (PIL) | Validasi berkas, pembacaan EXIF, dan resize citra |
+| **Komputasi Matriks** | NumPy | Manipulasi tensor dan operasi array |
+| **Upload Parser** | python-multipart | Penanganan pengunggahan file multipart |
 
----
-
-## 3. Instalasi & Penyiapan Pertama Kali (*First-time Setup*)
-
-### A. Penyiapan Backend
-Buka terminal (PowerShell atau Command Prompt) dan masuk ke direktori `backend`:
-```powershell
-cd "c:\Users\User\Documents\Project\GERD Classification\backend"
-```
-
-Pastikan virtual environment telah aktif atau gunakan Python dari `.venv`:
-```powershell
-# Jika dependensi belum diinstal:
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-Pastikan file model dan konfigurasi Guard berikut tersedia pada folder `backend/model`:
-- `model/lanjutan/model_gerd_lanjutan.keras` (Model CNN utama)
-- `model/guard/gerd_guard.npz` (Matriks kovariansi OOD & statistik)
-- `model/guard/gerd_guard_config.json` (Konfigurasi ambang batas kalibrasi)
-
-### B. Penyiapan Frontend
-Buka terminal baru dan masuk ke direktori `frontend`:
-```powershell
-cd "c:\Users\User\Documents\Project\GERD Classification\frontend"
-
-# Instal dependensi paket node
-npm install
-```
+### Frontend (`/frontend`)
+| Komponen | Teknologi | Peran |
+|---|---|---|
+| **Framework Web** | Next.js 15 (App Router) | Framework React modern untuk produksi |
+| **UI Library** | React 19 | Library antarmuka deklaratif |
+| **Bahasa** | TypeScript 5.6 | Menjamin keamanan tipe (*type safety*) kode |
+| **Desain & Tema** | CSS Variables Modern (`globals.css`) | Tema dinamis Terang (*Light*) dan Gelap (*Dark Mode*) |
+| **Penyimpanan Lokal** | Browser LocalStorage (`lib/store.ts`) | Penyimpanan riwayat pemeriksaan & pengaturan profil |
+| **Proxy Gateway** | Next.js Rewrites (`next.config.mjs`) | Meneruskan `/api/*` ke backend tanpa kendala CORS |
 
 ---
 
-## 4. Cara Menjalankan Aplikasi (*Running the Project*)
+## 3. Prasyarat Sistem (*Prerequisites*)
 
-Untuk mengoperasikan sistem secara penuh, jalankan **Backend** dan **Frontend** pada dua terminal terpisah.
+Sebelum memulai instalasi, pastikan perangkat Anda telah terpasang:
+1. **Python 3.11 (64-bit)** ([Unduh Python](https://www.python.org/downloads/))
+2. **Node.js (v18.18+ atau v20+) & npm** ([Unduh Node.js](https://nodejs.org/))
+3. **Git** (opsional, untuk manajemen repositori)
+4. **Sistem Operasi**: Windows 10/11, macOS, atau Linux
 
-### Langkah 1: Jalankan Backend (Terminal 1)
+---
+
+## 4. Panduan Instalasi & Penyiapan Pertama Kali
+
+### Langkah A: Penyiapan Backend
+1. Buka terminal (PowerShell / Command Prompt) dan masuk ke folder `backend`:
+   ```powershell
+   cd "c:\Users\User\Documents\Project\GERD Classification\backend"
+   ```
+
+2. Buat dan aktifkan virtual environment Python:
+   ```powershell
+   # Membuat virtual environment
+   python -m venv .venv
+
+   # Mengaktifkan di Windows (PowerShell):
+   .\.venv\Scripts\Activate.ps1
+   # Atau jika di Command Prompt (cmd):
+   .\.venv\Scripts\activate.bat
+   ```
+
+3. Pasang seluruh pustaka dependensi backend:
+   ```powershell
+   pip install -r requirements.txt
+   ```
+
+4. Pastikan berkas model berikut tersedia pada folder `backend/model/`:
+   - `model/combined/model_gerd_combined.keras` *(Model klasifikasi aktif)*
+   - `model/gate/image_type_classifier.keras` *(Model gate filter citra)*
+   - `model/gate/image_type_config.json` *(Konfigurasi ambang non-endoskopi)*
+
+---
+
+### Langkah B: Penyiapan Frontend
+1. Buka terminal baru dan masuk ke folder `frontend`:
+   ```powershell
+   cd "c:\Users\User\Documents\Project\GERD Classification\frontend"
+   ```
+
+2. Pasang dependensi Node.js:
+   ```powershell
+   npm install
+   ```
+
+---
+
+## 5. Cara Menjalankan Aplikasi (*Running the Application*)
+
+Aplikasi dijalankan pada dua terminal terpisah:
+
+### Terminal 1: Jalankan Backend API
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
-*Output sukses terminal backend:*
+*Tanda backend berhasil aktif:*
 ```text
-Model GERD berhasil dimuat.
-Input model: (None, 224, 224, 3)
-Guard aktif. Ukuran input: (224, 224)
-Threshold terkalibrasi: 0.44
-INFO: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+Model GERD: ...\backend\model\combined\model_gerd_combined.keras
+Image-type gate: ...\backend\model\gate\image_type_classifier.keras
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 ```
 
-### Langkah 2: Jalankan Frontend (Terminal 2)
+### Terminal 2: Jalankan Frontend Web
 ```powershell
-cd frontend
+cd "c:\Users\User\Documents\Project\GERD Classification\frontend"
 npm run dev
 ```
-*Output sukses terminal frontend:*
+*Tanda frontend berhasil aktif:*
 ```text
-  VITE v8.3.5  ready in 450 ms
-
-  ➜  Local:   http://localhost:3000/
-  ➜  Network: http://192.168.x.x:3000/
+   ▲ Next.js 15.1.0
+   - Local:        http://localhost:3000
 ```
 
-### Langkah 3: Akses Aplikasi
-- Buka browser Anda dan akses antarmuka web:
-  👉 **http://localhost:3000**
-- Akses dokumentasi interaktif Swagger API (Backend):
-  👉 **http://127.0.0.1:8000/docs**
-- Cek status kesiapan model (*Health Check*):
-  👉 **http://127.0.0.1:8000/health**
+```text
+   powershell -ExecutionPolicy Bypass -File .\run-all.ps1
+```
+
+### Akses Melalui Peramban (*Browser*):
+- 🌐 **Antarmuka Aplikasi Web**: [http://localhost:3000](http://localhost:3000)
+- 📄 **Dokumentasi Interaktif API (Swagger UI)**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- 🩺 **Pemeriksaan Kesiapan Model (*Health Check*)**: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 
 ---
 
-## 5. Alur Operasional Analisis Citra (*Step-by-Step User Guide*)
+## 6. Panduan Penggunaan Modul Aplikasi
 
-Aplikasi web terdiri dari 3 kolom alur kerja klinis:
+### 1. Halaman Beranda (`/`)
+- Memuat ringkasan sistem, informasi model EfficientNetB0, alur kerja pemeriksaan, serta tombol cepat **"Mulai Analisis Citra"**.
 
-```
-+------------------------+-------------------------------+--------------------------+
-|  1. Unggah Citra       |  2. Hasil Prediksi & Grad-CAM |  3. Riwayat Analisis     |
-|  - Drag & Drop File    |  - Klasifikasi & Confidence   |  - Daftar Rekap Pasien   |
-|  - Validasi Preprocess |  - Heatmap Lesi (Explainable) |  - Detail & Cetak Resume |
-+------------------------+-------------------------------+--------------------------+
-```
+### 2. Modul Analisis (`/analisis`)
+- **Unggah Citra Endoskopi:**
+  - Klik area dropzone atau seret (*drag-and-drop*) berkas citra.
+  - Didukung navigasi papan ketik (*Enter* / *Space*).
+  - Format yang didukung: **JPG, JPEG, PNG, BMP** (maksimal 10 MB).
+  - **Sampel Uji Cepat:** Tersedia tombol pintasan (*Sampel Z-Line*, *Sampel GERD*, *Sampel Normal*) untuk pengujian instan tanpa harus menyiapkan file lokal.
+  - Pratinjau citra menampilkan nama berkas, ukuran format (KB / MB), serta tombol **Ganti citra** dan **Hapus**.
+- **Informasi Pasien:**
+  - Masukkan ID Pasien Anonim (misal: `PS-8821`), Usia, Jenis Kelamin, dan Keluhan Klinis (opsional).
+- **Hasil Analisis (`ResultDialog`):**
+  - Klik tombol **"Mulai analisis"**.
+  - Jendela modal akan menampilkan label prediksi (`GERD` atau `Normal`), persentase keyakinan (*confidence meter*), probabilitas detail per kelas, status kepatuhan ambang batas profil, tombol cetak rekap medis, dan tombol **"Simpan ke riwayat"**.
+- **Peringatan Guard:** Jika gambar bukan citra endoskopi (dokumen, foto luar, x-ray), sistem akan menampilkan kartu peringatan merah informatif: *Citra ditolak oleh sistem keamanan (Guard)*.
 
-### 1. Unggah Citra Endoskopi (Kolom 1)
-- Seret (*drag & drop*) file gambar endoskopi ke kotak unggah, atau klik tombol **"Pilih File Endoskopi"**.
-- Format yang didukung: **JPEG, JPG, PNG, BMP, WEBP** (maksimal 10 MB, resolusi minimal 32×32 px).
-- Anda juga dapat memilih sampel preset instan (**Esofagitis**, **Normal**, **Polip**) untuk demonstrasi cepat.
-- Sistem akan melakukan validasi format bit, auto-orientasi EXIF, dan normalisasi ukuran citra (224×224 px).
+### 3. Riwayat Analisis (`/riwayat`)
+- Menyimpan hasil pemeriksaan di penyimpanan lokal peramban (*localStorage*).
+- Dilengkapi pencarian ID pasien, filter cepat (*Semua*, *GERD*, *Normal*), pagination, dan tombol **Ekspor CSV** untuk pelaporan data.
 
-### 2. Jalankan Analisis AI
-- Klik tombol **"Lanjut ke Analisis Model AI"** (atau analisis akan berjalan otomatis setelah berkas terunggah).
-- Pipeline backend akan mengevaluasi:
-  1. Filter statistik kecerahan & kontras citra.
-  2. Jarak OOD Mahalanobis untuk memastikan citra merupakan endoskopi saluran cerna yang valid.
-  3. Inferensi CNN EfficientNetB0 dengan TTA (*Test-Time Augmentation*).
-  4. Kalibrasi probabilitas Platt (*Platt Scaling*).
-  5. Pembangkitan peta aktivasi fitur Grad-CAM.
-
-### 3. Tinjauan Hasil Prediksi & Grad-CAM (Kolom 2)
-- **Hasil Klasifikasi**: Menampilkan kategori prediksi (**GERD Positif** atau **GERD Negatif/Normal**).
-- **Tingkat Kepercayaan (*Confidence*)**: Menampilkan persentase kepastian model terkalibrasi.
-- **Peta Grad-CAM**:
-  - Mode **Berdampingan (*Side-by-side*)**: Membandingkan citra asli dengan heatmap Grad-CAM.
-  - Mode **Overlay Heatmap**: Menumpuk heatmap di atas citra asli dengan slider opasitas interaktif untuk memverifikasi lokasi anatomi lesi mukosa / Z-line.
-  - Tombol **"Perbesar Area Z-Line"** untuk memperbesar detail citra.
-
-### 4. Simpan ke Riwayat & Cetak Rekap (Kolom 3)
-- Klik tombol **"Simpan ke Riwayat (EHR)"** untuk menyimpan hasil pemeriksaan ke database lokal.
-- Klik rekaman pada tabel riwayat untuk membuka modal detail.
-- Klik **"Cetak Rekap Medis"** untuk mencetak laporan resmi atau menyimpannya sebagai format PDF.
+### 4. Pengaturan Profil (`/profil`)
+- Mengatur identitas pengguna/dokter serta instansi.
+- Mengatur **Ambang Batas Keyakinan (*Threshold*)** kustom ($50\% - 98\%$) dengan opsi preset:
+  - `50%` (Sensitivitas tinggi)
+  - `85%` (Rekomendasi standar)
+  - `98%` (Spesifisitas maksimal)
 
 ---
 
-## 6. Penjelasan Status & Kategori Guard
+## 7. Pengujian Model di RapidMiner Studio
 
-Sistem dilengkapi proteksi klinis (*Guard*) untuk mencegah kesalahan interpretasi:
+Untuk menguji performa model (Confusion Matrix, Kurva ROC, AUC, F1-Score) di **RapidMiner Studio**:
 
-| Status Hasil | Keterangan Klinis | Tindakan Rekomendasi |
-| :--- | :--- | :--- |
-| **GERD** | Probabilitas terkalibrasi $\ge 0.44$. Terdeteksi erosi mukosa esofagus distal atau break pada Z-line. | Konfirmasi derajat erosi sesuai kriteria *Los Angeles Classification*. |
-| **GERD_Normal** | Probabilitas terkalibrasi $< 0.44$. Mukosa esofagus tampak intak tanpa lesi erosif. | Pertimbangkan evaluasi klinis gejala NERD bila pasien bergejala refluks. |
-| **TIDAK_PASTI** | Skor probabilitas berada di dekat batas keputusan model (*Uncertainty Band*). | Memerlukan tinjauan langsung oleh dokter spesialis gastroenterologi. |
-| **DITOLAK** | Citra bukan endoskopi (*Out-of-Distribution*), format rusak, atau kualitas pencahayaan ekstrem. | Unggah ulang citra endoskopi saluran cerna yang memadai. |
+1. Jalankan script batch evaluation bawaan:
+   ```powershell
+   cd backend
+   python export_for_rapidminer.py --folder "path/ke/folder_citra_uji" --out "hasil_rapidminer.csv"
+   ```
+2. Buka **RapidMiner Studio** $\rightarrow$ Buat proses baru:
+   - Tarik operator **`Read CSV`** (arahkan ke `hasil_rapidminer.csv`).
+   - Tarik operator **`Set Role`** (pilih atribut `actual_label` $\rightarrow$ role `label`).
+   - Tarik operator **`Set Role`** (pilih atribut `prediction` $\rightarrow$ role `prediction`).
+   - Tarik operator **`Performance (Binominal Classification)`** $\rightarrow$ centang *accuracy*, *precision*, *recall*, *AUC*, *f_measure*.
+3. Klik tombol **Run (▶️)** untuk melihat Confusion Matrix visual dan Kurva ROC.
 
 ---
 
-## 7. Endpoint API Backend
-
-Jika Anda mengintegrasikan backend dengan sistem SIMRS / EHR eksternal:
+## 8. Endpoint API Backend (FastAPI)
 
 | Method | Endpoint | Deskripsi |
-| :--- | :--- | :--- |
-| `GET` | `/` | Informasi versi API, arsitektur model, dan fitur aktif. |
-| `GET` | `/health` | Pemeriksaan kesehatan status model dan komponen Guard. |
-| `POST` | `/predict` | Menerima berkas `multipart/form-data` (`file`) dan mengembalikan hasil klasifikasi, probabilitas, serta data base64 Grad-CAM. |
+|---|---|---|
+| `GET` | `/` | Informasi status API dan versi aktif. |
+| `GET` | `/health` | Memeriksa status muat model GERD dan Image-Type Gate. |
+| `POST` | `/predict` | Menerima berkas `multipart/form-data` (`file`) dan mengembalikan hasil klasifikasi. |
 
-**Contoh Payload Respons `/predict`:**
+### Contoh Respons Sukses (`200 OK`):
 ```json
 {
-  "status": "GERD",
   "prediction": "GERD",
-  "category": "GERD",
-  "primary_result": "GERD Positif (Esofagitis Refluks / Erosi)",
-  "confidence": 0.998,
+  "status": "GERD",
+  "confidence": 0.941258,
   "probabilities": {
-    "GERD": 0.998,
-    "GERD_Normal": 0.002
+    "GERD_Normal": 0.058742,
+    "GERD": 0.941258
   },
-  "alasan": "",
-  "gradcam_image": "data:image/jpeg;base64,/9j/4AAQ...",
-  "threshold": 0.44,
-  "skor_gerd": 0.998,
-  "skor_mentah": 0.9998,
-  "jarak_ood": 2360.5,
-  "filename": "pasien_001.jpg",
-  "model": "EfficientNetB0",
-  "disclaimer": "Hasil ini merupakan prediksi model berbasis deep learning..."
+  "skor_gerd": 0.941258,
+  "threshold": 0.5,
+  "guard": true,
+  "gate": {
+    "status": "LOLOS_GATE",
+    "skor_non_endoscopy": 0.000124,
+    "ambang_non_endoscopy": 0.01
+  },
+  "reason": "Lolos filter tipe gambar.",
+  "model": "EfficientNetB0_GERD_Combined",
+  "disclaimer": "Hasil eksperimental, bukan diagnosis medis. Perlu interpretasi tenaga kesehatan.",
+  "filename": "pasien_endoskopi.jpg"
+}
+```
+
+### Contoh Respons Citra Ditolak (`422 Unprocessable Entity`):
+```json
+{
+  "detail": "Gambar terdeteksi sebagai non-endoskopi oleh image-type gate."
 }
 ```
 
 ---
 
-## 8. Panduan Mengatasi Kendala (*Troubleshooting*)
+## 9. Panduan Mengatasi Kendala (*Troubleshooting*)
 
-1. **PowerShell `PSSecurityException` (Script execution disabled):**
-   - Jalankan perintah dengan awalan `cmd /c` atau jalankan PowerShell sebagai Administrator dan aktifkan kebijakan eksekusi:
-     ```powershell
-     Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-     ```
-2. **Port 8000 atau Port 3000 Sudah Digunakan (*Address already in use*):**
-   - Cari dan hentikan proses yang menempati port:
-     ```powershell
-     # Cek port 8000
-     netstat -ano | findstr :8000
-     # Hentikan proses berdasarkan PID
-     taskkill /PID <PID_NOMOR> /F
-     ```
-3. **Frontend Tidak Terhubung ke Backend (*Failed to fetch*):**
-   - Pastikan backend berjalan pada `http://127.0.0.1:8000` (bukan port lain).
-   - Periksa status `http://127.0.0.1:8000/health` di browser. Jika backend offline, frontend secara cerdas beralih ke simulasi interaktif tanpa menyebabkan crash.
-4. **Grad-CAM Tidak Muncul pada Citra Baru:**
-   - Pastikan backend sedang aktif saat mengunggah citra. Backend otomatis membangkitkan heatmap aktivasi dan menyematkannya ke respons JSON.
+1. **PowerShell Script Execution Error (`PSSecurityException`):**
+   Jika aktivasi venv diblokir oleh sistem Windows PowerShell, jalankan perintah ini satu kali:
+   ```powershell
+   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+   ```
+2. **Port 8000 atau Port 3000 Terpakai (*Port already in use*):**
+   ```powershell
+   # Periksa PID yang memakai port
+   netstat -ano | findstr :8000
+   # Hentikan proses
+   taskkill /PID <PID_NOMOR> /F
+   ```
+3. **Backend Tidak Terjangkau dari Frontend:**
+   - Pastikan backend aktif di `http://127.0.0.1:8000`.
+   - Next.js telah dikonfigurasi melalui `next.config.mjs` untuk mem-proxy panggilan `/api/*` secara otomatis ke `http://127.0.0.1:8000/*`.
+4. **Format Berkas Tidak Didukung:**
+   - Gunakan format **JPG**, **JPEG**, **PNG**, atau **BMP**. Berkas format lain seperti PDF, WEBP, atau DOCX akan ditolak secara otomatis untuk menjaga integritas model.
 
 ---
 
-## 9. Catatan Medis & Kepatuhan Etika
+## 10. Batasan Tanggung Jawab Klinis (*Medical Disclaimer*)
 
-> **PERINGATAN MEDIS:**
-> Sistem ini dikembangkan sebagai alat bantu komputasi edukasi dan riset pendukung keputusan klinis (*Clinical Decision Support*). Sistem ini **hanya mengklasifikasikan pola citra medis, bukan menetapkan diagnosis medis final secara definitif**. Segala keputusan diagnostik dan intervensi terapi tetap menjadi wewenang dan tanggung jawab penuh dokter spesialis / tenaga medis profesional.
-
+> ⚠️ **PERINGATAN MEDIS:**
+> Sistem ini dikembangkan sebagai alat bantu komputasi edukasi dan riset pendukung keputusan klinis (*Clinical Decision Support*). Sistem ini **hanya mengklasifikasikan pola citra medis, bukan menetapkan diagnosis medis final secara definitif**. Segala keputusan diagnostik dan intervensi terapi tetap menjadi wewenang dan tanggung jawab penuh dokter spesialis gastroenterologi / tenaga medis profesional.

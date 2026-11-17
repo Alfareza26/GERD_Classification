@@ -6,6 +6,11 @@ export type HistoryRecord = {
   id: string; patientId: string; age: number; sex: string; notes: string;
   at: string; file: string; thumb: string;
   label: Label; confidence: number; probabilities?: Record<string, number>;
+  gate_status?: string;
+  heatmap_image?: string | null;
+  overlay_image?: string | null;
+  original_image?: string | null;
+  model_name?: string;
 };
 export type Profile = { name: string; email: string; phone: string; institution: string; role: string; threshold: number };
 
