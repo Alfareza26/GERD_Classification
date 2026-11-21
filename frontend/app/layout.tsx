@@ -9,7 +9,7 @@ const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], variable: "--font-jakart
 
 export const metadata: Metadata = {
   title: "GERD AI · Klasifikasi citra endoskopi",
-  description: "Klasifikasi citra endoskopi GERD dan Normal dengan EfficientNetB4 dan visualisasi Grad-CAM.",
+  description: "Klasifikasi citra endoskopi GERD dan Normal dengan EfficientNetB5 dan visualisasi Grad-CAM.",
 };
 
 // Terapkan tema tersimpan sebelum render supaya layar tidak berkedip.

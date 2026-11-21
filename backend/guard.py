@@ -1,190 +1,395 @@
+
+"""GERDGuard Image Type Gate and preprocessing utilities."""
+
 import io
 import json
+from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
-from PIL import Image, UnidentifiedImageError
+from PIL import (
+    Image,
+    UnidentifiedImageError,
+)
 
-ALLOWED_FORMATS = ("JPEG", "PNG", "BMP")
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+ALLOWED_FORMATS = (
+    "JPEG",
+    "PNG",
+    "BMP",
+)
+
 MAX_FILE_SIZE = 10 * 1024 * 1024
 MAX_PIXELS = 50_000_000
 MIN_SIDE = 32
-GATE_SIZE = (224, 224)            # (tinggi, lebar) input Image Type Gate (EfficientNetB0)
-CLASSIFIER_SIZE = (380, 380)     # (tinggi, lebar) input EfficientNetB4
 
+GATE_SIZE = (380, 380)
+CLASSIFIER_SIZE = (456, 456)
+
+
+# ============================================================
+# EXCEPTIONS
+# ============================================================
 
 class InvalidImageError(ValueError):
-    """Gambar gagal validasi. Pesan sudah jelas dan aman ditampilkan ke pengguna."""
+    """Gambar tidak valid atau tidak memenuhi persyaratan."""
 
 
-# ---------------------------------------------------------------------------
-# Utilitas internal
-# ---------------------------------------------------------------------------
+# ============================================================
+# IMAGE VALIDATION
+# ============================================================
 
-def _load_rgb(image_bytes: bytes) -> Image.Image:
-    """Validasi byte gambar asli lalu decode ke PIL RGB (belum di-resize).
+def _load_rgb(
+    image_bytes: bytes,
+) -> Image.Image:
 
-    Raise InvalidImageError bila gambar tidak valid atau rusak.
-    """
     if not image_bytes:
-        raise InvalidImageError("File gambar kosong.")
+        raise InvalidImageError(
+            "File gambar kosong."
+        )
+
     if len(image_bytes) > MAX_FILE_SIZE:
-        raise InvalidImageError("Ukuran gambar maksimal 10 MB.")
+        raise InvalidImageError(
+            "Ukuran gambar maksimal 10 MB."
+        )
+
     try:
-        with Image.open(io.BytesIO(image_bytes)) as im:
-            if im.format not in ALLOWED_FORMATS:
+        with Image.open(
+            io.BytesIO(image_bytes)
+        ) as image:
+
+            image_format = image.format
+
+            if image_format not in ALLOWED_FORMATS:
                 raise InvalidImageError(
-                    "Format gambar tidak didukung. Gunakan JPG, PNG, atau BMP."
+                    "Format gambar tidak didukung. "
+                    "Gunakan JPG, PNG, atau BMP."
                 )
-            width, height = im.size
-            if width * height > MAX_PIXELS or min(width, height) < MIN_SIDE:
+
+            width, height = image.size
+
+            if (
+                width * height > MAX_PIXELS
+                or min(width, height) < MIN_SIDE
+            ):
                 raise InvalidImageError(
-                    f"Resolusi {width}x{height} tidak memenuhi batas "
-                    f"(sisi minimal {MIN_SIDE} px, maksimal {MAX_PIXELS:,} piksel)."
+                    f"Resolusi {width}x{height} tidak memenuhi "
+                    f"batas. Minimal sisi {MIN_SIDE}px dan "
+                    f"maksimal {MAX_PIXELS:,} piksel."
                 )
-            # convert() memuat seluruh piksel; file terpotong/rusak gagal di sini
-            return im.convert("RGB")
+
+            image.load()
+
+            return image.convert("RGB")
+
     except InvalidImageError:
         raise
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
-        raise InvalidImageError("File bukan gambar valid atau rusak.") from exc
+
+    except (
+        UnidentifiedImageError,
+        OSError,
+        ValueError,
+        Image.DecompressionBombError,
+    ) as exc:
+
+        raise InvalidImageError(
+            "File bukan gambar valid atau rusak."
+        ) from exc
 
 
-def _resize_to_array(im: Image.Image, size: tuple[int, int]) -> np.ndarray:
-    """Resize PIL Image ke (tinggi, lebar) lalu kembalikan float32 skala 0..255.
+# ============================================================
+# IMAGE PREPROCESSING
+# ============================================================
 
-    Tidak melakukan pembagian /255 — model sudah punya Rescaling/Normalization
-    internal di layer pertamanya.
-    """
-    resized = im.resize((size[1], size[0]), Image.Resampling.BILINEAR)
-    return np.asarray(resized, dtype=np.float32)
+def _resize_to_array(
+    image: Image.Image,
+    size: tuple[int, int],
+) -> np.ndarray:
+    """Resize menjadi RGB float32 dengan rentang 0-255."""
+
+    resized = image.resize(
+        (size[1], size[0]),
+        Image.Resampling.BILINEAR,
+    )
+
+    array = np.asarray(
+        resized,
+        dtype=np.float32,
+    )
+
+    if array.shape != (
+        size[0],
+        size[1],
+        3,
+    ):
+        raise RuntimeError(
+            f"Preprocessing menghasilkan shape tidak valid: "
+            f"{array.shape}"
+        )
+
+    if not np.isfinite(array).all():
+        raise RuntimeError(
+            "Preprocessing menghasilkan nilai NaN atau Inf."
+        )
+
+    return array
 
 
-# ---------------------------------------------------------------------------
-# GERDGuard
-# ---------------------------------------------------------------------------
+# ============================================================
+# GERD GUARD
+# ============================================================
 
 class GERDGuard:
-    """Filter awal berbasis image-type classifier, terpisah dari model GERD.
+    """Image Type Gate EfficientNetB4 dan preprocessing B5."""
 
-    Dua jalur preprocessing **independen**, keduanya dari byte gambar asli:
+    def __init__(
+        self,
+        gate_model_path: str | Path,
+        config_path: str | Path,
+    ):
 
-    1. ``check_bytes``  →  RGB 224×224  untuk Image Type Gate (EfficientNetB0).
-    2. ``prepare_classifier_image``  →  RGB 380×380  untuk EfficientNetB4.
+        gate_model_path = Path(
+            gate_model_path
+        )
 
-    Kedua model sudah punya Rescaling/Normalization di dalamnya, sehingga
-    input cukup float32 RGB 0..255.  **Jangan** /255 atau preprocess_input
-    lagi di luar.
-    """
+        config_path = Path(
+            config_path
+        )
 
-    def __init__(self, gate_model_path: str, config_path: str):
-        # ---- konfigurasi threshold yang sudah diverifikasi ----
-        with open(config_path, encoding="utf-8") as f:
-            self.cfg = json.load(f)
-        size = self.cfg.get("input_size", [224, 224])
-        self.img_size = (int(size[0]), int(size[1]))      # selalu (224, 224)
-        self.threshold = float(self.cfg.get("non_endoscopy_threshold", 0.5))
-
-        # ---- muat gate model ----
-        self.gate = tf.keras.models.load_model(str(gate_model_path), compile=False)
-        if tuple(self.gate.input_shape[1:]) != (*self.img_size, 3):
-            raise RuntimeError(
-                f"Input image-type gate tidak cocok: {self.gate.input_shape}"
+        if not gate_model_path.is_file():
+            raise FileNotFoundError(
+                f"Gate model tidak ditemukan: {gate_model_path}"
             )
-        if self.gate.output_shape[-1] != 1:
-            raise RuntimeError("Gate harus memiliki satu output sigmoid.")
 
-        # Kompilasi graph inferensi gate dengan @tf.function untuk eksekusi CPU cepat
+        if not config_path.is_file():
+            raise FileNotFoundError(
+                f"Gate config tidak ditemukan: {config_path}"
+            )
+
+        # ----------------------------------------------------
+        # LOAD CONFIGURATION
+        # ----------------------------------------------------
+
+        try:
+            with open(
+                config_path,
+                "r",
+                encoding="utf-8",
+            ) as file:
+
+                self.cfg = json.load(file)
+
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Format JSON gate config tidak valid: {exc}"
+            ) from exc
+
+        size = self.cfg.get(
+            "input_size",
+            [380, 380],
+        )
+
+        if (
+            not isinstance(size, list)
+            or len(size) != 2
+        ):
+            raise RuntimeError(
+                "input_size pada konfigurasi gate harus "
+                "berisi [height, width]."
+            )
+
+        self.img_size = (
+            int(size[0]),
+            int(size[1]),
+        )
+
+        if self.img_size != GATE_SIZE:
+            raise RuntimeError(
+                f"Ukuran gate harus {GATE_SIZE}, "
+                f"konfigurasi saat ini {self.img_size}."
+            )
+
+        self.threshold = float(
+            self.cfg.get(
+                "non_endoscopy_threshold",
+                0.01,
+            )
+        )
+
+        if not 0.0 <= self.threshold <= 1.0:
+            raise RuntimeError(
+                f"Gate threshold tidak valid: {self.threshold}"
+            )
+
+        # ----------------------------------------------------
+        # LOAD GATE MODEL
+        # ----------------------------------------------------
+
+        print("[GERDGuard] Loading Image Type Gate...")
+
+        try:
+            self.gate = tf.keras.models.load_model(
+                str(gate_model_path),
+                compile=False,
+            )
+
+        except Exception as exc:
+            raise RuntimeError(
+                f"Gagal memuat Image Type Gate: {exc}"
+            ) from exc
+
+        if tuple(
+            self.gate.input_shape[1:]
+        ) != (*self.img_size, 3):
+
+            raise RuntimeError(
+                f"Input Gate tidak sesuai. "
+                f"Model: {self.gate.input_shape}, "
+                f"Expected: (None, {self.img_size[0]}, "
+                f"{self.img_size[1]}, 3)."
+            )
+
+        if self.gate.output_shape[-1] != 1:
+            raise RuntimeError(
+                "Output Image Type Gate harus satu neuron sigmoid."
+            )
+
+        # ----------------------------------------------------
+        # FAST INFERENCE
+        # ----------------------------------------------------
+
         @tf.function(reduce_retracing=True)
-        def _fast_gate_call(x: tf.Tensor) -> tf.Tensor:
-            return self.gate(x, training=False)
+        def _fast_gate_call(
+            x: tf.Tensor,
+        ) -> tf.Tensor:
+
+            return self.gate(
+                x,
+                training=False,
+            )
 
         self._fast_gate_call = _fast_gate_call
 
+        print("[GERDGuard] Image Type Gate loaded.")
+        print("[GERDGuard] Input size:", self.img_size)
+        print("[GERDGuard] Threshold:", self.threshold)
+
+    # ========================================================
+    # WARMUP
+    # ========================================================
+
     def warmup(self):
-        """Warmup JIT graph trace saat startup."""
-        dummy = tf.zeros((1, *self.img_size, 3), dtype=tf.float32)
+
+        dummy = tf.zeros(
+            (1, *self.img_size, 3),
+            dtype=tf.float32,
+        )
+
         self._fast_gate_call(dummy)
 
-    # ----- 1. Image Type Gate  (RGB 224×224) -----
+    # ========================================================
+    # IMAGE TYPE GATE
+    # ========================================================
 
-    def check_bytes(self, image_bytes: bytes) -> tuple[dict, Image.Image | None]:
-        """Jalankan Image Type Gate pada gambar.
+    def check_bytes(
+        self,
+        image_bytes: bytes,
+    ) -> tuple[dict, Image.Image | None]:
 
-        Return
-        ------
-        (gate_result, pil_image | None)
-            - ``pil_image`` adalah gambar asli (RGB, ukuran asli, **bukan**
-              hasil resize 224×224) yang bisa digunakan untuk preprocessing
-              EfficientNetB4 selanjutnya.
-            - Jika DITOLAK, ``pil_image`` = None.
-        """
+        # Decode dan validasi gambar.
+        pil_image = _load_rgb(
+            image_bytes
+        )
+
+        # Preprocessing khusus EfficientNetB4.
+        gate_array = _resize_to_array(
+            pil_image,
+            self.img_size,
+        )
+
+        gate_tensor = tf.convert_to_tensor(
+            gate_array[None, ...],
+            dtype=tf.float32,
+        )
+
         try:
-            pil_image = _load_rgb(image_bytes)
-        except InvalidImageError as exc:
-            return {"status": "DITOLAK", "alasan": str(exc)}, None
+            prediction = self._fast_gate_call(
+                gate_tensor
+            )
 
-        # Resize ke 224×224 **hanya** untuk gate — array ini tidak boleh
-        # dipakai sebagai input EfficientNetB4.
-        gate_arr = _resize_to_array(pil_image, self.img_size)  # (224, 224, 3)
+            score = float(
+                np.asarray(prediction).reshape(-1)[0]
+            )
 
-        gate_tensor = tf.convert_to_tensor(gate_arr[None, ...], dtype=tf.float32)
-        score = float(np.asarray(self._fast_gate_call(gate_tensor)).reshape(-1)[0])
-        score = float(np.clip(score, 0.0, 1.0))
+        except Exception as exc:
+            raise RuntimeError(
+                f"Image Type Gate gagal melakukan inference: {exc}"
+            ) from exc
 
-        # Konfigurasi gate: kelas 0=endoscopy, kelas 1=non_endoscopy.
+        if not np.isfinite(score):
+            raise RuntimeError(
+                f"Output Image Type Gate tidak valid: {score}"
+            )
+
+        score = float(
+            np.clip(score, 0.0, 1.0)
+        )
+
+        # Kelas 0 = endoscopy.
+        # Kelas 1 = non-endoscopy.
         if score >= self.threshold:
+
             return {
                 "status": "DITOLAK",
-                "alasan": "Gambar terdeteksi sebagai non-endoskopi oleh image-type gate.",
+                "alasan": (
+                    "Gambar terdeteksi sebagai non-endoskopi "
+                    "oleh Image Type Gate."
+                ),
                 "skor_non_endoscopy": round(score, 6),
                 "ambang_non_endoscopy": self.threshold,
             }, None
 
-        # LOLOS — kembalikan gambar asli (bukan gate_arr)
         return {
             "status": "LOLOS_GATE",
             "skor_non_endoscopy": round(score, 6),
             "ambang_non_endoscopy": self.threshold,
         }, pil_image
 
-    # ----- 2. EfficientNetB4 Preprocessing  (RGB 380×380) -----
+    # ========================================================
+    # EFFICIENTNETB5 PREPROCESSING
+    # ========================================================
 
     def prepare_classifier_image(
         self,
         source: bytes | Image.Image,
     ) -> np.ndarray:
-        """Siapkan input untuk EfficientNetB4 dari gambar asli.
 
-        Parameters
-        ----------
-        source : bytes | PIL.Image.Image
-            - ``bytes``  → decode ulang dari byte asli (jalur mandiri).
-            - ``Image``  → PIL RGB yang sudah lolos ``check_bytes`` (hemat
-              decode ulang, tetap ukuran asli).
-
-        Returns
-        -------
-        np.ndarray
-            float32 (380, 380, 3), RGB, skala 0..255.
-            Tanpa pembagian /255 — EfficientNetB4 menggunakan preprocessing
-            internal (Rescaling layer).
-
-        Raises
-        ------
-        InvalidImageError
-            Bila ``source`` berupa bytes dan gambar tidak valid.
-        TypeError
-            Bila ``source`` bukan bytes maupun PIL Image.
-        """
         if isinstance(source, bytes):
-            pil_image = _load_rgb(source)
-        elif isinstance(source, Image.Image):
-            # Pastikan sudah RGB; convert() aman dipanggil berulang
-            pil_image = source if source.mode == "RGB" else source.convert("RGB")
-        else:
-            raise TypeError(
-                f"source harus bytes atau PIL.Image.Image, bukan {type(source).__name__}"
+
+            pil_image = _load_rgb(
+                source
             )
 
-        return _resize_to_array(pil_image, CLASSIFIER_SIZE)  # (380, 380, 3)
+        elif isinstance(source, Image.Image):
+
+            pil_image = (
+                source
+                if source.mode == "RGB"
+                else source.convert("RGB")
+            )
+
+        else:
+
+            raise TypeError(
+                "source harus berupa bytes atau PIL.Image.Image. "
+                f"Input diterima: {type(source).__name__}"
+            )
+
+        return _resize_to_array(
+            pil_image,
+            CLASSIFIER_SIZE,
+        )

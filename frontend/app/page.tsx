@@ -73,7 +73,7 @@ export default function Home() {
               <span className="muted">GERD dan Normal</span>
             </div>
             <div>
-              <b>EfficientNetB4</b>
+              <b>EfficientNetB5</b>
               <span className="muted">Model Klasifikasi & Grad-CAM Explainability</span>
             </div>
             <div>

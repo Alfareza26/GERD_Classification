@@ -1,156 +1,245 @@
-"""GERD Classification & Explainability API (GERDGuard).
-
-Arsitektur:
-1. Image Type Gate (EfficientNetB0) -> RGB 224x224 (threshold verifikasi).
-2. GERD Classifier (EfficientNetB4) -> RGB 380x380 (input gambar asli).
-3. Grad-CAM Explainability -> heatmap & overlay pada layer top_conv.
-"""
 
 from __future__ import annotations
 
 import base64
-import io
 import threading
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import cv2
 import numpy as np
 import tensorflow as tf
+
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
 from gradcam import GradCAMError, generate_gradcam
 from guard import GERDGuard, InvalidImageError
+from report_generator import generate_patient_report
 
-# ---------------------------------------------------------------------------
-# Konfigurasi & Path
-# ---------------------------------------------------------------------------
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "model" / "combined" / "model_gerd_efficientnetb4.keras"
-GATE_MODEL_PATH = BASE_DIR / "model" / "gate" / "image_type_classifier.keras"
-GATE_CONFIG_PATH = BASE_DIR / "model" / "gate" / "image_type_config.json"
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-ALLOWED_MIME = {"image/jpeg", "image/png", "image/bmp"}
-MODEL_NAME = "EfficientNetB4_GERD_Model"
+MODEL_PATH = (
+    BASE_DIR / "model" / "gerd" /
+    "model_gerd_efficientnetb5.keras"
+)
+
+GATE_MODEL_PATH = (
+    BASE_DIR / "model" / "gate" /
+    "image_type_classifier_efficientnetb4.keras"
+)
+
+GATE_CONFIG_PATH = (
+    BASE_DIR / "model" / "gate" /
+    "image_type_config.json"
+)
+
+MAX_FILE_SIZE = 10 * 1024 * 1024
+
+ALLOWED_MIME = {
+    "image/jpeg",
+    "image/png",
+    "image/bmp",
+}
+
+MODEL_NAME = "EfficientNetB5"
 CLASSIFIER_THRESHOLD = 0.50
 
-# State aplikasi (dimuat sekali saat startup)
 model: tf.keras.Model | None = None
 guard: GERDGuard | None = None
+
 lock = threading.Lock()
 
 
-# ---------------------------------------------------------------------------
-# Lifespan: Pemuatan Model Sekali Saat Startup
-# ---------------------------------------------------------------------------
+# ============================================================
+# APPLICATION LIFESPAN
+# ============================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global model, guard
-    for path in (MODEL_PATH, GATE_MODEL_PATH, GATE_CONFIG_PATH):
-        if not path.is_file():
-            raise RuntimeError(f"Berkas wajib tidak ditemukan: {path}")
 
-    # Muat model EfficientNetB4
-    model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
-    if tuple(model.input_shape[1:]) != (380, 380, 3):
-        raise RuntimeError(
-            f"Input shape EfficientNetB4 tidak cocok: {model.input_shape} (expected (None, 380, 380, 3))"
+    print("\n========== GERDGuard STARTUP ==========")
+
+    for path in (
+        MODEL_PATH,
+        GATE_MODEL_PATH,
+        GATE_CONFIG_PATH,
+    ):
+        if not path.is_file():
+            raise RuntimeError(
+                f"File wajib tidak ditemukan: {path}"
+            )
+
+    try:
+        print("[1/2] Loading EfficientNetB5...")
+
+        model = tf.keras.models.load_model(
+            str(MODEL_PATH),
+            compile=False,
         )
 
-    # Muat Image Type Gate & konfigurasinya
-    guard = GERDGuard(GATE_MODEL_PATH, GATE_CONFIG_PATH)
+        if tuple(model.input_shape[1:]) != (456, 456, 3):
+            raise RuntimeError(
+                f"Input EfficientNetB5 tidak sesuai: "
+                f"{model.input_shape}"
+            )
 
-    print("========================================")
-    print("GERDGuard API siap.")
-    print("Model GERD      :", MODEL_PATH)
-    print("Image-type gate :", GATE_MODEL_PATH)
-    print(f"Gate threshold  : {guard.threshold}")
-    print(f"GERD threshold  : {CLASSIFIER_THRESHOLD}")
-    print("========================================")
+        print("[2/2] Loading Image Type Gate...")
+
+        guard = GERDGuard(
+            GATE_MODEL_PATH,
+            GATE_CONFIG_PATH,
+        )
+
+        print("\nGERDGuard API siap.")
+        print("Model GERD      :", MODEL_PATH)
+        print("Image-type gate :", GATE_MODEL_PATH)
+        print("Gate threshold  :", guard.threshold)
+        print("GERD threshold  :", CLASSIFIER_THRESHOLD)
+        print("=======================================\n")
+
+    except Exception:
+        print("\n========== STARTUP ERROR ==========")
+        traceback.print_exc()
+        print("===================================\n")
+        raise
 
     yield
 
+    print("\nShutting down GERDGuard...")
+
     guard = None
     model = None
+
     tf.keras.backend.clear_session()
 
 
-# ---------------------------------------------------------------------------
-# Inisialisasi FastAPI
-# ---------------------------------------------------------------------------
+# ============================================================
+# FASTAPI
+# ============================================================
 
 app = FastAPI(
-    title="GERD API",
+    title="GERDGuard API",
     description=(
-        "API klasifikasi endoskopi GERD dengan Image Type Gate dan Grad-CAM visualizer. "
-        "Eksperimental, bukan alat diagnosis mandiri."
+        "GERD image classification with Image Type Gate, "
+        "Grad-CAM explainability, and patient report."
     ),
-    version="4.1.0",
+    version="4.3.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
 
-# ---------------------------------------------------------------------------
-# Utilitas Encode Gambar ke Base64 (In-Memory, Tidak Disimpan ke Disk)
-# ---------------------------------------------------------------------------
+# ============================================================
+# IMAGE ENCODING
+# ============================================================
 
-def _bgr_to_base64(bgr_array: np.ndarray, quality: int = 90) -> str:
-    """Encode OpenCV BGR image ke data URI base64 JPEG in-memory."""
-    success, buffer = cv2.imencode(".jpg", bgr_array, [cv2.IMWRITE_JPEG_QUALITY, quality])
+def _bgr_to_base64(
+    image: np.ndarray,
+    quality: int = 90,
+) -> str:
+
+    success, buffer = cv2.imencode(
+        ".jpg",
+        image,
+        [cv2.IMWRITE_JPEG_QUALITY, quality],
+    )
+
     if not success:
-        raise RuntimeError("Gagal meng-encode array gambar ke format JPEG.")
-    encoded = base64.b64encode(buffer).decode("utf-8")
+        raise RuntimeError(
+            "Gagal mengubah gambar menjadi JPEG."
+        )
+
+    encoded = base64.b64encode(
+        buffer
+    ).decode("utf-8")
+
     return f"data:image/jpeg;base64,{encoded}"
 
 
-def _bytes_to_base64(data: bytes, mime_type: str = "image/jpeg") -> str:
-    """Encode raw image bytes ke data URI base64."""
-    encoded = base64.b64encode(data).decode("utf-8")
+def _bytes_to_base64(
+    data: bytes,
+    mime_type: str,
+) -> str:
+
+    encoded = base64.b64encode(
+        data
+    ).decode("utf-8")
+
     return f"data:{mime_type};base64,{encoded}"
 
 
-# ---------------------------------------------------------------------------
-# Pipeline Prediksi & Grad-CAM
-# ---------------------------------------------------------------------------
+# ============================================================
+# PREDICTION PIPELINE
+# ============================================================
 
-def run_prediction_pipeline(data: bytes, mime_type: str) -> dict:
-    """Pipeline penuh prediksi endoskopi.
+def run_prediction_pipeline(
+    data: bytes,
+    mime_type: str,
+) -> dict:
 
-    Langkah-langkah:
-    1. Validasi gambar & cek Image Type Gate (224x224).
-    2. Jika DITOLAK -> hentikan proses, jangan jalankan EfficientNetB4 atau Grad-CAM.
-    3. Jika LOLOS -> Preprocessing khusus EfficientNetB4 (380x380) dari gambar asli.
-    4. Inference EfficientNetB4 (training=False, augmentasi nonaktif).
-    5. Jalankan Grad-CAM berdasarkan kelas prediksi (target kelas GERD atau Normal).
-    6. Susun respons lengkap dengan heatmap & overlay base64.
-    """
     if model is None or guard is None:
-        raise RuntimeError("Model atau filter belum siap.")
+        raise RuntimeError(
+            "Model atau Image Type Gate belum siap."
+        )
 
-    # 1. Jalankan Image Type Gate
+    print("\n========== PREDICTION START ==========")
+
+    # --------------------------------------------------------
+    # 1. IMAGE TYPE GATE
+    # --------------------------------------------------------
+
+    print("[1] Checking image type...")
+
     gate_result, pil_image = guard.check_bytes(data)
 
-    # Jika gambar rusak / decoding gagal, lempar InvalidImageError agar menghasilkan HTTP 400
-    if gate_result["status"] == "DITOLAK" and pil_image is None:
-        alasan = gate_result.get("alasan", "")
-        if "rusak" in alasan.lower() or "bukan gambar valid" in alasan.lower() or "batas" in alasan.lower():
-            raise InvalidImageError(alasan)
+    gate_status = gate_result.get("status")
+    gate_score = gate_result.get("skor_non_endoscopy")
 
-    # 2. Jika gambar ditolak oleh Gate (bukan endoskopi) -> stop di sini
-    if gate_result["status"] == "DITOLAK":
+    print("Gate status:", gate_status)
+    print("Gate score :", gate_score)
+
+    if (
+        gate_status == "DITOLAK"
+        and pil_image is None
+    ):
+
+        reason = gate_result.get("alasan", "")
+
+        if (
+            "rusak" in reason.lower()
+            or "bukan gambar valid" in reason.lower()
+            or "batas" in reason.lower()
+            or "format gambar" in reason.lower()
+        ):
+            raise InvalidImageError(reason)
+
+    # --------------------------------------------------------
+    # 2. STOP IF IMAGE IS NOT ENDOSCOPY
+    # --------------------------------------------------------
+
+    if gate_status == "DITOLAK":
+
+        print("[RESULT] Image rejected by Image Type Gate.")
+
         return {
             "status": "DITOLAK",
             "prediction": "DITOLAK",
@@ -160,71 +249,253 @@ def run_prediction_pipeline(data: bytes, mime_type: str) -> dict:
             "probability_normal": None,
             "confidence": None,
             "gate_status": "DITOLAK",
-            "gate_score": gate_result.get("skor_non_endoscopy"),
+            "gate_score": gate_score,
             "model_name": MODEL_NAME,
-            "reason": gate_result.get("alasan", "Gambar terdeteksi bukan endoskopi."),
+            "reason": gate_result.get(
+                "alasan",
+                "Gambar bukan endoskopi.",
+            ),
             "original_image": None,
             "heatmap_image": None,
             "overlay_image": None,
+            "report": None,
         }
 
-    # 3. Preprocessing gambar asli ke RGB 380x380 (skala 0..255 float32)
-    arr_b4 = guard.prepare_classifier_image(pil_image)
-    batch = tf.convert_to_tensor(arr_b4[None, ...], dtype=tf.float32)
+    if pil_image is None:
+        raise RuntimeError(
+            "Image Gate meloloskan gambar tetapi "
+            "objek gambar tidak tersedia."
+        )
 
-    # 4. Prediksi EfficientNetB4 (dengan lock thread-safety)
+    # --------------------------------------------------------
+    # 3. PREPROCESSING EFFICIENTNETB5
+    # --------------------------------------------------------
+
+    print("[2] Preparing EfficientNetB5 input...")
+
+    arr_b5 = guard.prepare_classifier_image(
+        pil_image
+    )
+
+    if arr_b5.shape != (456, 456, 3):
+        raise RuntimeError(
+            f"Input B5 tidak valid: {arr_b5.shape}"
+        )
+
+    batch = tf.convert_to_tensor(
+        arr_b5[None, ...],
+        dtype=tf.float32,
+    )
+
+    # --------------------------------------------------------
+    # 4. CLASSIFICATION
+    # --------------------------------------------------------
+
+    print("[3] Running EfficientNetB5...")
+
     with lock:
-        pred_tensor = model(batch, training=False)
-        p_gerd = float(np.asarray(pred_tensor).reshape(-1)[0])
-    p_gerd = float(np.clip(p_gerd, 0.0, 1.0))
-    p_normal = float(1.0 - p_gerd)
+        pred_tensor = model(
+            batch,
+            training=False,
+        )
 
-    predicted_class = "GERD" if p_gerd >= CLASSIFIER_THRESHOLD else "GERD_Normal"
-    confidence = p_gerd if predicted_class == "GERD" else p_normal
+    prediction_values = np.asarray(
+        pred_tensor
+    ).reshape(-1)
 
-    # 5. Jalankan Grad-CAM berdasarkan kelas prediksi
-    target_class_gerd = (predicted_class == "GERD")
+    if prediction_values.size != 1:
+        raise RuntimeError(
+            "Output model GERD harus memiliki satu nilai sigmoid."
+        )
+
+    p_gerd = float(prediction_values[0])
+
+    if not np.isfinite(p_gerd):
+        raise RuntimeError(
+            f"Output model tidak valid: {p_gerd}"
+        )
+
+    if not 0.0 <= p_gerd <= 1.0:
+        raise RuntimeError(
+        f"Probabilitas di luar rentang sigmoid: {p_gerd}"
+    )
+
+    p_normal = 1.0 - p_gerd
+
+    predicted_class = (
+        "GERD"
+        if p_gerd >= CLASSIFIER_THRESHOLD
+        else "GERD_Normal"
+    )
+
+    confidence = (
+        p_gerd
+        if predicted_class == "GERD"
+        else p_normal
+    )
+
+    target_class_gerd = (
+        predicted_class == "GERD"
+    )
+
+    print("P(GERD) :", p_gerd)
+    print("P(Normal):", p_normal)
+    print("Prediction:", predicted_class)
+
+    # --------------------------------------------------------
+    # 5. GRAD-CAM
+    # --------------------------------------------------------
+
+    print("[4] Generating Grad-CAM...")
+
     try:
         with lock:
             cam_result = generate_gradcam(
                 model=model,
-                img_array=arr_b4,
+                img_array=arr_b5,
                 original_image=pil_image,
                 target_class_gerd=target_class_gerd,
             )
+
+        if not isinstance(cam_result, dict):
+            raise RuntimeError(
+                "Output Grad-CAM harus berupa dictionary."
+            )
+
+        required_keys = {
+            "heatmap",
+            "overlay",
+            "cam_raw"
+        }
+
+        missing_keys = required_keys.difference(
+            cam_result.keys()
+        )
+
+        if missing_keys:
+            raise RuntimeError(
+                f"Output Grad-CAM tidak lengkap: {missing_keys}"
+            )
+
+        if (
+        cam_result["heatmap"] is None
+        or cam_result["overlay"] is None
+        ):
+            raise RuntimeError(
+            "Grad-CAM menghasilkan gambar kosong."
+        )
+
+    # Validasi CAM raw
+        cam_raw = np.asarray(
+        cam_result["cam_raw"],
+        dtype=np.float32
+        )
+
+        if cam_raw.ndim != 2 or cam_raw.size == 0:
+            raise RuntimeError("Format cam_raw tidak valid.")
+
+        if not np.isfinite(cam_raw).all():
+            raise RuntimeError(
+                "cam_raw mengandung NaN atau infinity."
+        )
+
     except Exception as exc:
-        raise GradCAMError(f"Kegagalan komputasi Grad-CAM: {exc}") from exc
+        print("\n========== GRAD-CAM ERROR ==========")
+        traceback.print_exc()
+        print("====================================\n")
 
-    # 6. Encode gambar ke base64 (in-memory)
-    original_b64 = _bytes_to_base64(data, mime_type)
-    heatmap_b64 = _bgr_to_base64(cam_result["heatmap"])
-    overlay_b64 = _bgr_to_base64(cam_result["overlay"])
+        raise GradCAMError(
+            f"Kegagalan komputasi Grad-CAM: {exc}"
+        ) from exc
 
-    return {
+    # --------------------------------------------------------
+    # 6. PATIENT REPORT GENERATOR
+    # --------------------------------------------------------
+
+    print("[5] Generating patient report...")
+
+    try:
+        patient_report = generate_patient_report(
+            prediction=predicted_class,
+            p_gerd=p_gerd,
+            gate_status=gate_status,
+            gradcam_result=cam_result,
+        )
+
+        print("\n========== PATIENT REPORT ==========")
+        print(
+            patient_report["explanation"]["summary"]
+        )
+        print("====================================\n")
+
+    except Exception:
+        print("\n========== REPORT GENERATOR ERROR ==========")
+        traceback.print_exc()
+        print("============================================\n")
+
+        raise
+
+    # --------------------------------------------------------
+    # 7. ENCODE IMAGES
+    # --------------------------------------------------------
+
+    print("[6] Encoding result images...")
+
+    original_b64 = _bytes_to_base64(
+        data,
+        mime_type,
+    )
+
+    heatmap_b64 = _bgr_to_base64(
+        cam_result["heatmap"]
+    )
+
+    overlay_b64 = _bgr_to_base64(
+        cam_result["overlay"]
+    )
+
+    # --------------------------------------------------------
+    # 8. RESPONSE
+    # --------------------------------------------------------
+
+    result = {
         "status": predicted_class,
         "prediction": predicted_class,
         "predicted_class": predicted_class,
         "label": predicted_class,
+
         "probability_gerd": round(p_gerd, 6),
         "probability_normal": round(p_normal, 6),
         "confidence": round(confidence, 6),
-        "gate_status": gate_result.get("status", "LOLOS_GATE"),
-        "gate_score": gate_result.get("skor_non_endoscopy"),
+
+        "gate_status": gate_status,
+        "gate_score": gate_score,
+
         "model_name": MODEL_NAME,
+
         "original_image": original_b64,
         "heatmap_image": heatmap_b64,
         "overlay_image": overlay_b64,
+
+        # Laporan individual dari Report Generator.
+        "report": patient_report,
     }
 
+    print("[SUCCESS] Prediction completed.")
+    print("=====================================\n")
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+    return result
+
+
+# ============================================================
+# ENDPOINTS
+# ============================================================
 
 @app.get("/")
 def root():
+
     return {
-        "message": "GERD Classification & Explainability API aktif",
+        "message": "GERDGuard API aktif.",
         "version": app.version,
         "docs": "/docs",
         "health": "/health",
@@ -233,59 +504,108 @@ def root():
 
 @app.get("/health")
 def health():
-    ready = model is not None and guard is not None
+
+    ready = (
+        model is not None
+        and guard is not None
+    )
+
     return {
         "status": "ok" if ready else "not_ready",
         "model_loaded": model is not None,
         "image_type_gate_loaded": guard is not None,
         "model_name": MODEL_NAME,
-        "model_path": str(MODEL_PATH.relative_to(BASE_DIR)),
-        "gate_model_path": str(GATE_MODEL_PATH.relative_to(BASE_DIR)),
-        "gate_threshold": guard.threshold if guard is not None else None,
+        "model_path": str(
+            MODEL_PATH.relative_to(BASE_DIR)
+        ),
+        "gate_model_path": str(
+            GATE_MODEL_PATH.relative_to(BASE_DIR)
+        ),
+        "gate_threshold": (
+            guard.threshold
+            if guard is not None
+            else None
+        ),
         "classifier_threshold": CLASSIFIER_THRESHOLD,
     }
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    # 1. Validasi kesiapan model
-    if model is None or guard is None:
-        raise HTTPException(503, "Model atau filter belum siap.")
+async def predict(
+    file: UploadFile = File(...),
+):
 
-    # 2. Validasi MIME type
-    content_type = (file.content_type or "").lower()
-    if content_type and content_type not in ALLOWED_MIME:
-        await file.close()
+    if model is None or guard is None:
         raise HTTPException(
-            status_code=415,
-            detail="Format gambar tidak didukung. Gunakan JPG, PNG, atau BMP.",
+            status_code=503,
+            detail="Model atau filter belum siap.",
         )
 
-    # 3. Baca bytes dengan batasan ukuran
+    content_type = (
+        file.content_type or ""
+    ).lower()
+
+    if content_type not in ALLOWED_MIME:
+        await file.close()
+
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                "Format gambar tidak didukung. "
+                "Gunakan JPG, PNG, atau BMP."
+            ),
+        )
+
     try:
-        data = await file.read(MAX_FILE_SIZE + 1)
+        data = await file.read(
+            MAX_FILE_SIZE + 1
+        )
     finally:
         await file.close()
 
     if not data:
-        raise HTTPException(status_code=400, detail="File gambar kosong.")
-    if len(data) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="Ukuran gambar maksimal 10 MB.")
-
-    mime_for_encode = content_type if content_type in ALLOWED_MIME else "image/jpeg"
-
-    # 4. Jalankan pipeline di thread pool
-    try:
-        result = await run_in_threadpool(run_prediction_pipeline, data, mime_for_encode)
-    except InvalidImageError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except GradCAMError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    except Exception as exc:
-        print("Prediction error:", repr(exc))
         raise HTTPException(
-            status_code=500,
-            detail=f"Terjadi kesalahan saat pemrosesan citra: {exc}",
+            status_code=400,
+            detail="File gambar kosong.",
+        )
+
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="Ukuran gambar maksimal 10 MB.",
+        )
+
+    try:
+        result = await run_in_threadpool(
+            run_prediction_pipeline,
+            data,
+            content_type,
+        )
+
+        return result
+
+    except InvalidImageError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
         ) from exc
 
-    return result
+    except GradCAMError as exc:
+        print("\n========== GRAD-CAM ERROR ==========")
+        traceback.print_exc()
+        print("====================================\n")
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Grad-CAM gagal: {exc}",
+        ) from exc
+
+    except Exception as exc:
+        print("\n========== PREDICTION ERROR ==========")
+        traceback.print_exc()
+        print("======================================\n")
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pemrosesan gambar gagal: {exc}",
+        ) from exc

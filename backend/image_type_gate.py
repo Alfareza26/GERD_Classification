@@ -22,7 +22,7 @@ class ImageTypeGate:
             self.config = json.load(f)
 
         self.img_size = tuple(
-            self.config.get("input_size", [224, 224])
+            self.config.get("input_size", [380, 380])
         )
 
         self.threshold = float(

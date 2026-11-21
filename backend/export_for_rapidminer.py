@@ -18,12 +18,12 @@ import numpy as np
 from PIL import Image
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MODEL = BASE_DIR / "model" / "combined" / "model_gerd_combined.keras"
+DEFAULT_MODEL = BASE_DIR / "model" / "gerd" / "gerdguard_b5_best.keras"
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
 
 
-def process_image(img_path: Path, target_size=(224, 224)):
-    """Memuat dan mengubah ukuran gambar ke format input model (224x224x3)."""
+def process_image(img_path: Path, target_size=(456, 456)):
+    """Memuat dan mengubah ukuran gambar ke format input model (456x456x3)."""
     with Image.open(img_path) as img:
         img = img.convert("RGB")
         img = img.resize(target_size, Image.Resampling.BILINEAR)
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     parser.add_argument("--folder", type=str, default=str(BASE_DIR / "testing_guard"),
                         help="Folder dataset uji (dapat berisi subfolder kelas)")
     parser.add_argument("--model", type=str, default=str(DEFAULT_MODEL),
-                        help="Path ke file model_gerd_combined.keras")
+                        help="Path ke file model_gerd_efficientnetb5.keras")
     parser.add_argument("--out", type=str, default=str(BASE_DIR / "hasil_prediksi_rapidminer.csv"),
                         help="Path output file CSV")
     parser.add_argument("--threshold", type=float, default=0.50,

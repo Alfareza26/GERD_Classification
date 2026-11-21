@@ -72,10 +72,11 @@ function simulateNormalize(body) {
     confidence: body.confidence ?? 0,
     gate_status: body.gate_status || "LOLOS_GATE",
     gate_score: body.gate_score,
-    model_name: body.model_name || "EfficientNetB4_GERD_Model",
+    model_name: body.model_name || "EfficientNetB5",
     original_image: body.original_image || null,
     heatmap_image: body.heatmap_image || null,
     overlay_image: body.overlay_image || null,
+    report: body.report || null,
   };
 }
 
@@ -118,8 +119,8 @@ async function runAll() {
     if (body.status !== "DITOLAK" || body.gate_status !== "DITOLAK") {
       throw new Error(`Expected DITOLAK, got status=${body.status}, gate_status=${body.gate_status}`);
     }
-    if (body.predicted_class !== null || body.heatmap_image !== null) {
-      throw new Error("EfficientNetB4 atau Grad-CAM tidak boleh dijalankan untuk gambar yang ditolak Gate");
+    if (body.predicted_class !== null || body.heatmap_image !== null || body.report !== null) {
+      throw new Error("EfficientNetB5, Grad-CAM, atau Report tidak boleh dijalankan untuk gambar yang ditolak Gate");
     }
     // Uji apakah normalize() melempar ApiError 422 untuk UI alert
     let rejectedCaught = false;
@@ -129,7 +130,7 @@ async function runAll() {
       if (e.status === 422) rejectedCaught = true;
     }
     if (!rejectedCaught) throw new Error("simulateNormalize tidak melempar error status 422 untuk penolakan Gate");
-    console.log(`  Ditolak oleh gate: "${body.reason}", B4/Grad-CAM dinonaktifkan: OK`);
+    console.log(`  Ditolak oleh gate: "${body.reason}", B5/Grad-CAM/Report dinonaktifkan: OK`);
   })();
 
   // 5. Uji tampilan hasil GERD
@@ -197,6 +198,18 @@ async function runAll() {
     console.log(`  Koneksi ke ${DEAD_PORT_URL} gagal ditangkap dengan pesan: "${errorMsg}"`);
   })();
 
+  // 9. Uji struktur Patient Report Generator (v2.0)
+  await test("9. Uji struktur Patient Report Generator (v2.0)", async () => {
+    const { body } = await callPredict(GERD_IMG_PATH);
+    if (!body.report) throw new Error("Field report tidak ada dalam response");
+    if (body.report.report_version !== "2.0") throw new Error(`Versi report bukan 2.0: ${body.report.report_version}`);
+    if (!body.report.explanation?.summary) throw new Error("Report explanation summary kosong");
+    if (!body.report.classification?.confidence_level) throw new Error("Confidence level kosong");
+    if (!body.report.visualization?.region_distribution) throw new Error("Region distribution kosong");
+    console.log(`  Report v${body.report.report_version} validated: ${body.report.classification.confidence_level} confidence`);
+    console.log(`  Summary: ${body.report.explanation.summary.slice(0, 80)}...`);
+  })();
+
   // Ringkasan
   console.log(`\n=================================================================`);
   console.log("RINGKASAN PENGUJIAN INTEGRASI FRONTEND (TAHAP 5)");
@@ -212,7 +225,7 @@ async function runAll() {
   if (failed > 0) {
     process.exit(1);
   } else {
-    console.log("\n🎉 Seluruh 8 skenario pengujian integrasi frontend BERHASIL!");
+    console.log("\n🎉 Seluruh 9 skenario pengujian integrasi frontend BERHASIL!");
     process.exit(0);
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { Label } from "./api";
+import type { Label, PatientReport } from "./api";
 
 export type HistoryRecord = {
   id: string; patientId: string; age: number; sex: string; notes: string;
@@ -11,6 +11,7 @@ export type HistoryRecord = {
   overlay_image?: string | null;
   original_image?: string | null;
   model_name?: string;
+  report?: PatientReport | null;
 };
 export type Profile = { name: string; email: string; phone: string; institution: string; role: string; threshold: number };
 
@@ -30,12 +31,33 @@ export function useStored<T>(key: string, fallback: T) {
   const [value, setValue] = useState<T>(fallback);
   const [ready, setReady] = useState(false);
   useEffect(() => { setValue(read(key, fallback)); setReady(true); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  const set = (next: T) => { setValue(next); write(key, next); };
+  const set = (next: T | ((prev: T) => T)) => {
+    setValue((prev) => {
+      const resolved = typeof next === "function" ? (next as (prev: T) => T)(prev) : next;
+      write(key, resolved);
+      return resolved;
+    });
+  };
   return [value, set, ready] as const;
 }
 
 export function addRecord(rec: HistoryRecord) {
   write(HISTORY_KEY, [rec, ...read<HistoryRecord[]>(HISTORY_KEY, [])]);
+}
+
+export function deleteRecord(id: string) {
+  const current = read<HistoryRecord[]>(HISTORY_KEY, []);
+  write(HISTORY_KEY, current.filter((r) => r.id !== id));
+}
+
+export function deleteRecords(ids: string[]) {
+  const idSet = new Set(ids);
+  const current = read<HistoryRecord[]>(HISTORY_KEY, []);
+  write(HISTORY_KEY, current.filter((r) => !idSet.has(r.id)));
+}
+
+export function clearHistory() {
+  write(HISTORY_KEY, []);
 }
 
 export async function makeThumb(file: File, width = 128): Promise<string> {

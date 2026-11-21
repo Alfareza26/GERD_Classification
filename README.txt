@@ -1,7 +1,7 @@
 GERDGuard backend update: model training terbaru
 
 Isi:
-- backend/main.py: FastAPI memakai model EfficientNetB0 hasil training gabungan terbaru.
+- backend/main.py: FastAPI memakai model EfficientNetB4 hasil training gabungan terbaru.
 - backend/model/combined/model_gerd_combined.keras: model dari GERD_Combined_Training_Results.
 - backend/requirements.txt
 - frontend/lib/gerdApi.ts: helper Next.js untuk memanggil API nyata.

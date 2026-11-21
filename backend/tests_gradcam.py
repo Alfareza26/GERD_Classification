@@ -1,11 +1,11 @@
-"""Pengujian Grad-CAM untuk model GERD EfficientNetB4.
+"""Pengujian Grad-CAM untuk model GERD EfficientNetB5.
 
 Jalankan:
     cd backend
     .venv\\Scripts\\python.exe tests_gradcam.py
 
 Memerlukan model asli di:
-    model/combined/model_gerd_efficientnetb4.keras
+    model/combined/gerdguard_b5_best.keras
 """
 
 from __future__ import annotations
@@ -47,9 +47,14 @@ def _test(name: str):
 print("Memuat model...")
 t0 = time.time()
 
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH = BASE_DIR / "model" / "combined" / "gerdguard_b5_best.keras"
+
 import tensorflow as tf
 model = tf.keras.models.load_model(
-    "model/combined/model_gerd_efficientnetb4.keras", compile=False
+    str(MODEL_PATH), compile=False
 )
 print(f"Model dimuat dalam {time.time() - t0:.1f}s")
 print(f"Input shape: {model.input_shape}")
@@ -66,9 +71,9 @@ _synthetic_rgb = np.random.randint(50, 200, (600, 800, 3), dtype=np.uint8)
 _synthetic_rgb[200:400, 300:500, :] = 240
 _pil_image = Image.fromarray(_synthetic_rgb, "RGB")
 
-# Preprocessing 380×380 untuk model (sama seperti guard.prepare_classifier_image)
-_img_380 = np.asarray(
-    _pil_image.resize((380, 380), Image.Resampling.BILINEAR),
+# Preprocessing 456×456 untuk model (sama seperti guard.prepare_classifier_image)
+_img_456 = np.asarray(
+    _pil_image.resize((456, 456), Image.Resampling.BILINEAR),
     dtype=np.float32,
 )
 
@@ -95,13 +100,13 @@ test_target_layer()
 
 @_test("Grad-CAM feature extractor menghasilkan shape aktivasi yang benar")
 def test_gradcam_model_build():
-    effnet = model.get_layer("efficientnetb4")
+    effnet = model.get_layer("efficientnetb5")
     top_conv = effnet.get_layer("top_conv")
     feat_model = tf.keras.Model(inputs=effnet.input, outputs=top_conv.output)
-    conv_out = feat_model(tf.zeros((1, 380, 380, 3)), training=False)
+    conv_out = feat_model(tf.zeros((1, 456, 456, 3)), training=False)
     print(f"  Conv activations shape: {conv_out.shape}")
-    assert conv_out.shape[1:3] == (12, 12), f"Spatial dims wrong: {conv_out.shape}"
-    assert conv_out.shape[3] == 1792, f"Channels wrong: {conv_out.shape}"
+    assert conv_out.shape[1:3] == (15, 15), f"Spatial dims wrong: {conv_out.shape}"
+    assert conv_out.shape[3] == 2048, f"Channels wrong: {conv_out.shape}"
 
 test_gradcam_model_build()
 
@@ -114,7 +119,7 @@ test_gradcam_model_build()
 def test_gradcam_gerd():
     result = generate_gradcam(
         model=model,
-        img_array=_img_380,
+        img_array=_img_456,
         original_image=_pil_image,
         target_class_gerd=True,
     )
@@ -130,7 +135,7 @@ def test_gradcam_gerd():
     # Periksa cam_raw
     cam = result["cam_raw"]
     assert cam.dtype == np.float32, f"cam_raw dtype: {cam.dtype}"
-    assert cam.shape == (12, 12), f"cam_raw shape: {cam.shape}"
+    assert cam.shape == (15, 15), f"cam_raw shape: {cam.shape}"
     assert 0.0 <= cam.min() <= cam.max() <= 1.0, (
         f"cam_raw range: [{cam.min()}, {cam.max()}]"
     )
@@ -168,7 +173,7 @@ test_gradcam_gerd()
 def test_gradcam_normal():
     result = generate_gradcam(
         model=model,
-        img_array=_img_380,
+        img_array=_img_456,
         original_image=_pil_image,
         target_class_gerd=False,
     )
@@ -176,7 +181,7 @@ def test_gradcam_normal():
     assert result["target"] == "GERD_Normal"
 
     cam = result["cam_raw"]
-    assert cam.shape == (12, 12)
+    assert cam.shape == (15, 15)
     assert 0.0 <= cam.min() <= cam.max() <= 1.0
 
     # Score untuk GERD_Normal harus = 1 - p_gerd
@@ -203,34 +208,42 @@ test_gradcam_normal()
 
 @_test("Bentuk tensor aktivasi dan gradien benar")
 def test_activation_gradient_shapes():
-    effnet = model.get_layer("efficientnetb4")
+    effnet = model.get_layer("efficientnetb5")
     top_conv = effnet.get_layer("top_conv")
     top_bn = effnet.get_layer("top_bn")
     top_act = effnet.get_layer("top_activation")
-    avg_pool = effnet.get_layer("avg_pool")
+    try:
+        gap = model.get_layer("global_average_pooling2d")
+    except ValueError:
+        gap = effnet.get_layer("avg_pool")
     dropout = model.get_layer("dropout")
     dense = model.get_layer("gerd_probability")
-    aug = model.get_layer("data_augmentation")
+    aug_layers = [
+        l for l in model.layers
+        if any(k in l.name for k in ["flip", "rotation", "zoom", "contrast", "augmentation"])
+    ]
 
     feat_model = tf.keras.Model(inputs=effnet.input, outputs=top_conv.output)
-    img_tensor = tf.convert_to_tensor(_img_380[None, ...], dtype=tf.float32)
+    img_tensor = tf.convert_to_tensor(_img_456[None, ...], dtype=tf.float32)
 
     with tf.GradientTape() as tape:
-        aug_x = aug(img_tensor, training=False)
-        conv_out = feat_model(aug_x, training=False)
+        h = img_tensor
+        for aug in aug_layers:
+            h = aug(h, training=False)
+        conv_out = feat_model(h, training=False)
         tape.watch(conv_out)
-        h = top_bn(conv_out, training=False)
-        h = top_act(h)
-        h = avg_pool(h)
-        h = dropout(h, training=False)
-        pred = dense(h, training=False)
+        h2 = top_bn(conv_out, training=False)
+        h2 = top_act(h2)
+        h2 = gap(h2)
+        h2 = dropout(h2, training=False)
+        pred = dense(h2, training=False)
         target = pred[0, 0]
 
     grads = tape.gradient(target, conv_out)
 
-    assert conv_out.shape == (1, 12, 12, 1792), f"conv_out shape: {conv_out.shape}"
+    assert conv_out.shape == (1, 15, 15, 2048), f"conv_out shape: {conv_out.shape}"
     assert grads is not None, "Gradien None!"
-    assert grads.shape == (1, 12, 12, 1792), f"grads shape: {grads.shape}"
+    assert grads.shape == (1, 15, 15, 2048), f"grads shape: {grads.shape}"
 
     grads_np = grads.numpy()
     assert not np.allclose(grads_np, 0), "Semua gradien nol — graph tidak terhubung"
@@ -250,7 +263,7 @@ test_activation_gradient_shapes()
 
 @_test("Rentang nilai heatmap [0, 255] uint8")
 def test_heatmap_range():
-    result = generate_gradcam(model, _img_380, _pil_image, target_class_gerd=True)
+    result = generate_gradcam(model, _img_456, _pil_image, target_class_gerd=True)
     hm = result["heatmap"]
     assert hm.dtype == np.uint8
     assert hm.min() >= 0
@@ -270,7 +283,7 @@ test_heatmap_range()
 
 @_test("Overlay menggabungkan gambar asli dan heatmap")
 def test_overlay_valid():
-    result = generate_gradcam(model, _img_380, _pil_image, target_class_gerd=True)
+    result = generate_gradcam(model, _img_456, _pil_image, target_class_gerd=True)
     ov = result["overlay"]
     hm = result["heatmap"]
 
@@ -299,14 +312,14 @@ test_overlay_valid()
 @_test("Grad-CAM tidak mengubah probabilitas prediksi model")
 def test_prediction_unchanged():
     # Prediksi sebelum Grad-CAM
-    pred_before = model(_img_380[None, ...], training=False)
+    pred_before = model(_img_456[None, ...], training=False)
     p_before = float(np.asarray(pred_before).reshape(-1)[0])
 
     # Jalankan Grad-CAM
-    result = generate_gradcam(model, _img_380, _pil_image, target_class_gerd=True)
+    result = generate_gradcam(model, _img_456, _pil_image, target_class_gerd=True)
 
     # Prediksi setelah Grad-CAM
-    pred_after = model(_img_380[None, ...], training=False)
+    pred_after = model(_img_456[None, ...], training=False)
     p_after = float(np.asarray(pred_after).reshape(-1)[0])
 
     diff = abs(p_before - p_after)
@@ -329,7 +342,7 @@ test_prediction_unchanged()
 @_test("original_image berupa numpy array uint8 juga berfungsi")
 def test_numpy_original():
     orig_np = np.array(_pil_image, dtype=np.uint8)
-    result = generate_gradcam(model, _img_380, orig_np, target_class_gerd=True)
+    result = generate_gradcam(model, _img_456, orig_np, target_class_gerd=True)
 
     assert result["heatmap"].shape == (600, 800, 3)
     assert result["overlay"].shape == (600, 800, 3)
@@ -353,15 +366,15 @@ def test_error_handling():
 
     # img_array shape salah
     try:
-        bad_arr = np.zeros((224, 224, 3), dtype=np.float32)
+        bad_arr = np.zeros((380, 380, 3), dtype=np.float32)
         generate_gradcam(model, bad_arr, _pil_image)
         assert False, "Seharusnya raise ValueError"
     except ValueError as e:
-        print(f"  Shape (224,224,3) → ValueError: {e}")
+        print(f"  Shape (380,380,3) → ValueError: {e}")
 
     # img_array dtype salah
     try:
-        bad_dtype = np.zeros((380, 380, 3), dtype=np.uint8)
+        bad_dtype = np.zeros((456, 456, 3), dtype=np.uint8)
         generate_gradcam(model, bad_dtype, _pil_image)
         assert False, "Seharusnya raise ValueError"
     except ValueError as e:
@@ -369,7 +382,7 @@ def test_error_handling():
 
     # original_image bukan gambar
     try:
-        generate_gradcam(model, _img_380, "bukan_gambar")
+        generate_gradcam(model, _img_456, "bukan_gambar")
         assert False, "Seharusnya raise ValueError"
     except ValueError as e:
         print(f"  original_image=str → ValueError: {e}")

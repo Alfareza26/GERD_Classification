@@ -1,7 +1,68 @@
 // lib/api.ts
-// Format respons & komunikasi API backend FastAPI GERDGuard (EfficientNetB4 + Gate + Grad-CAM)
+// Format respons & komunikasi API backend FastAPI GERDGuard (EfficientNetB5 + Image Type Gate B4 + Grad-CAM)
 
 export type Label = "GERD" | "GERD_Normal" | "Normal";
+
+export type RegionDistributionItem = {
+  region: string;
+  score: number;
+  percentage: number;
+};
+
+export type HeatmapVisualizationAnalysis = {
+  available: boolean;
+  dominant_region: string | null;
+  dominant_activation_percentage?: number | null;
+  activation_pattern: "localized" | "multifocal" | "distributed" | "zero_activation" | "unavailable" | string;
+  activation_pattern_description?: string;
+  coverage_percentage: number | null;
+  region_distribution: RegionDistributionItem[];
+  top_regions: RegionDistributionItem[];
+  explanation: string;
+};
+
+export type ClassificationAnalysis = {
+  predicted_class: "GERD" | "GERD_Normal";
+  p_gerd: number;
+  p_normal: number;
+  confidence: number;
+  confidence_percentage: number;
+  confidence_level: "Tinggi" | "Sedang" | "Rendah";
+  confidence_description: string;
+  explanation: string;
+  detail: string;
+};
+
+export type ImageGateAnalysis = {
+  status: string;
+  explanation: string;
+};
+
+export type ClinicalFindings = {
+  lesion_detection: string;
+  erosion_detection: string;
+  inflammation_detection: string;
+  ulcer_detection: string;
+  la_grade: string;
+  explanation: string;
+};
+
+export type ReportExplanation = {
+  summary: string;
+  prediction_interpretation: string;
+  probability_interpretation: string;
+  visual_interpretation: string;
+  clinical_note: string;
+};
+
+export type PatientReport = {
+  report_version: string;
+  classification: ClassificationAnalysis;
+  image_gate: ImageGateAnalysis;
+  visualization: HeatmapVisualizationAnalysis;
+  findings: ClinicalFindings;
+  explanation: ReportExplanation;
+};
 
 export type PredictionResult = {
   status: string; // "GERD" | "GERD_Normal" | "DITOLAK"
@@ -18,6 +79,7 @@ export type PredictionResult = {
   overlay_image: string | null;
   reason?: string | null;
   probabilities?: Record<string, number>; // 0..1
+  report?: PatientReport | null;
 };
 
 // Alias untuk kompatibilitas ke belakang
@@ -94,12 +156,13 @@ export function normalize(raw: unknown): PredictionResult {
     confidence: conf,
     gate_status: (r.gate_status as string) || "LOLOS_GATE",
     gate_score: typeof r.gate_score === "number" ? r.gate_score : null,
-    model_name: r.model_name || "EfficientNetB4_GERD_Model",
+    model_name: r.model_name || "EfficientNetB5",
     original_image: r.original_image || null,
     heatmap_image: r.heatmap_image || null,
     overlay_image: r.overlay_image || null,
     reason: r.reason || null,
     probabilities,
+    report: (r.report as PatientReport) || null,
   };
 }
 

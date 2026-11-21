@@ -75,7 +75,7 @@ with TestClient(main.app) as client:
         assert data.get("status") == "ok", f"Status: {data.get('status')}"
         assert data.get("model_loaded") is True
         assert data.get("image_type_gate_loaded") is True
-        assert data.get("model_name") == "EfficientNetB4_GERD_Model"
+        assert data.get("model_name") == "EfficientNetB5_GERD_Model"
         assert data.get("classifier_threshold") == 0.50
         assert data.get("gate_threshold") is not None
         print(f"  Response: {data}")

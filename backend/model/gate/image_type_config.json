@@ -1,8 +1,8 @@
 {
-  "model_name": "EfficientNetB0_ImageTypeGate",
+  "model_name": "EfficientNetB4_ImageTypeGate",
   "input_size": [
-    224,
-    224
+    380,
+    380
   ],
   "classes": {
     "0": "endoscopy",
