@@ -1,4 +1,4 @@
-# Panduan Sistem G-Care (GERD AI Classifier & Explainability)
+# Panduan Sistem G-Care 
 Sistem Klasifikasi Citra Endoskopi Berbasis Deep Learning (EfficientNetB5), Image-Type Gate (EfficientNetB4), dan Explainable AI (Grad-CAM)
 
 ---
@@ -134,7 +134,7 @@ Sebelum memulai instalasi, pastikan perangkat Anda telah terpasang:
 
 ## 5. Cara Menjalankan Aplikasi (*Running the Application*)
 
-### ⚡ Cara Cepat: 1 Kali Klik (*One-Click Launcher*)
+### Cara Cepat: 1 Kali Klik (*One-Click Launcher*)
 Anda dapat menjalankan Backend FastAPI dan Frontend Next.js secara bersamaan dengan **1 kali klik**:
 - **Metode A (Double-Click di Windows Explorer):** Cukup klik dua kali berkas **`run-all.bat`**.
 - **Metode B (Via PowerShell):**
@@ -143,7 +143,7 @@ Anda dapat menjalankan Backend FastAPI dan Frontend Next.js secara bersamaan den
   ```
 *Skrip ini secara otomatis memvalidasi lingkungan virtual `.venv`, memasang `node_modules` jika belum ada, membuka terminal backend (port 8000) dan frontend (port 3000), serta membuka peramban secara otomatis ke `http://localhost:3000`.*
 
-> 💡 **Untuk Menghentikan Seluruh Layanan:** Klik dua kali berkas **`stop-all.bat`** atau jalankan `.\stop-all.ps1`.
+>  **Untuk Menghentikan Seluruh Layanan:** Klik dua kali berkas **`stop-all.bat`** atau jalankan `.\stop-all.ps1`.
 
 ---
 
@@ -181,9 +181,9 @@ npm run dev
 ```
 
 ### Akses Melalui Peramban (*Browser*):
-- 🌐 **Antarmuka Aplikasi Web**: [http://localhost:3000](http://localhost:3000)
-- 📄 **Dokumentasi Interaktif API (Swagger UI)**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- 🩺 **Pemeriksaan Kesiapan Model (*Health Check*)**: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+-  **Antarmuka Aplikasi Web**: [http://localhost:3000](http://localhost:3000)
+-  **Dokumentasi Interaktif API (Swagger UI)**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+-  **Pemeriksaan Kesiapan Model (*Health Check*)**: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 
 ---
 
@@ -205,19 +205,6 @@ npm run dev
   3. Inferensi klasifikasi EfficientNetB5 (456×456)
   4. Komputasi peta perhatian Grad-CAM (top_conv)
   5. Penyusunan laporan klinis individual (Report Generator v2.0)
-- **Medical AI Report Dashboard Terstruktur:**
-  Hasil inferensi otomatis ditampilkan langsung di halaman dengan 7 seksi komprehensif:
-  - **SECTION A (Header Laporan):** ID Pasien, waktu pemeriksaan, status Gate, versi laporan, tombol *Cetak Laporan* (`window.print()`), dan *Simpan ke Riwayat*.
-  - **SECTION B (Ringkasan Klasifikasi):** Kartu Prediksi (`GERD` vs `GERD_Normal`, persentase keyakinan, badge tingkat keyakinan *Tinggi/Sedang/Rendah*, meter bar) bersisian dengan Kartu Distribusi Probabilitas $P(\text{GERD})$ vs $P(\text{GERD\_Normal})$.
-  - **SECTION C (Visualisasi Grad-CAM):** Area visualisasi besar dengan *mode switcher* interaktif:
-    - *Bandingan (Asli & Overlay)*
-    - *Heatmap JET (Aktivasi Murni)*
-    - *Semua (3 Citra)*
-    - Fitur **Lightbox / Expand Image** untuk memperbesar citra resolusi tinggi saat diklik.
-  - **SECTION D (Analisis Aktivasi 9 Region):** Distribusi horizontal sembilan area citra (*kiri atas, tengah atas, kanan atas, kiri tengah, tengah citra, kanan tengah, kiri bawah, tengah bawah, kanan bawah*) dengan penanda bintang/badge pada area dominan, dilengkapi ringkasan pola aktivasi (*localized / multifocal / distributed*) dan cakupan area kuat.
-  - **SECTION E (Temuan Makroskopis):** Tabel indikator evaluasi klinis (*lesion, erosion, inflammation, ulcer, LA Grade*) dengan status standar **"Belum tersedia"** dan catatan batasan model.
-  - **SECTION F (Interpretasi Medis):** Panel terstruktur memuat ringkasan sintesis, interpretasi prediksi, interpretasi probabilitas, interpretasi visual, dan catatan klinis dokter.
-  - **SECTION G (Medical Disclaimer):** Batasan tanggung jawab klinis resmi.
 
 ### 3. Riwayat Pemeriksaan (`/riwayat`)
 - Menyimpan rekam medis analisis secara lokal di browser (*LocalStorage*).
@@ -244,7 +231,7 @@ Untuk mengevaluasi performa model (*Confusion Matrix, Kurva ROC, AUC, F1-Score, 
    - Tarik operator **`Set Role`** (pilih atribut `actual_label` $\rightarrow$ set target role ke `label`).
    - Tarik operator **`Set Role`** (pilih atribut `prediction` $\rightarrow$ set target role ke `prediction`).
    - Tarik operator **`Performance (Binominal Classification)`** $\rightarrow$ aktifkan *accuracy*, *precision*, *recall*, *AUC*, dan *f_measure*.
-3. Hubungkan port operator dan klik tombol **Run (▶️)** untuk melihat matriks konfusi visual dan kurva performa.
+3. Hubungkan port operator dan klik tombol **Run** untuk melihat matriks konfusi visual dan kurva performa.
 
 ---
 
@@ -395,6 +382,6 @@ Sistem telah diuji menggunakan rangkaian penjaminan mutu otomatis:
 
 ## 11. Batasan Tanggung Jawab Klinis (*Medical Disclaimer*)
 
-> ⚠️ **PERINGATAN MEDIS PENTING:**
+>  **PERINGATAN MEDIS PENTING:**
 > Sistem **GERDGuard** dikembangkan sebagai instrumen komputasi riset dan pendukung keputusan klinis (*Clinical Decision Support Tool*). Sistem ini **berfungsi menyaring karakteristik pola citra medis dan bukan menetapkan diagnosis medis final secara mandiri**.
 > Peta perhatian Grad-CAM menunjukkan fitur visual matematis yang memengaruhi keputusan model dan tidak dapat dianggap sebagai bukti langsung adanya lesi patologis, inflamasi, atau kelainan anatomis definitif. Segala penegakan diagnosis klinis, penetapan derajat Los Angeles (LA Grade), serta keputusan intervensi terapi tetap menjadi hak, wewenang, dan tanggung jawab penuh dokter spesialis gastroenterologi / tenaga medis berwenang.
