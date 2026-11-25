@@ -1,4 +1,4 @@
-# Panduan Sistem GERDGuard (GERD AI Classifier & Explainability)
+# Panduan Sistem G-Care (GERD AI Classifier & Explainability)
 Sistem Klasifikasi Citra Endoskopi Berbasis Deep Learning (EfficientNetB5), Image-Type Gate (EfficientNetB4), dan Explainable AI (Grad-CAM)
 
 ---
